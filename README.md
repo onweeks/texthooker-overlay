@@ -4,6 +4,8 @@ A frameless, always-on-top texthooker overlay for macOS with the [Yomitan](https
 
 Made for reading manga, visual novels, or games in fullscreen: whenever new Japanese text lands on the clipboard (e.g. from an OCR tool), the overlay pops up over whatever you're reading with the captured line ready for instant Yomitan lookups. Click back on your reading and it disappears again.
 
+<img src="screenshot.png" alt="The overlay floating above a fullscreen manga reader, with a Yomitan popup open" width="700">
+
 The reading pane is an Electron-embedded adaptation of [tsukami-texthooker](https://github.com/onweeks/tsukami-texthooker) — use that if you want the standalone browser version.
 
 ## How it works
