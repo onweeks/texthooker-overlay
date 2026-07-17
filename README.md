@@ -8,6 +8,8 @@ Made for reading manga, visual novels, or games in fullscreen: whenever new Japa
 
 <img src="screenshot-yomitan.png" alt="Looking up a word with the built-in Yomitan pop-up dictionary" width="700">
 
+*The manga in the screenshots is blurred to avoid reproducing copyrighted artwork — the overlay and the Yomitan popup are what's being demonstrated.*
+
 The reading pane is an Electron-embedded adaptation of [tsukami-texthooker](https://github.com/onweeks/tsukami-texthooker) — use that if you want the standalone browser version.
 
 ## How it works
