@@ -33,6 +33,8 @@ npm start
 
 Then import your dictionaries: press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to open Yomitan's settings and add them under *Dictionaries*. Imported dictionaries and settings persist in `~/Library/Application Support/overlay-app/` and survive restarts.
 
+If you already use Yomitan in your normal browser, the easiest route is to carry your setup over instead of starting fresh: in your browser's Yomitan go to *Settings → Backup*, export both your settings and your dictionary collection, then import the two files in this app's Yomitan settings. You end up with identical dictionaries and configuration in one step.
+
 Anki integration works as normal: with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) installed in Anki and enabled in Yomitan's settings, the popup's **+** button adds cards straight to your deck.
 
 ## Controls
