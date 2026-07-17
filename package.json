@@ -1,0 +1,12 @@
+{
+  "name": "overlay-app",
+  "description": "Frameless always-on-top texthooker overlay for macOS with the Yomitan pop-up dictionary built in",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.1.1"
+  }
+}

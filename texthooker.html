@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Texthooker</title>
+<style>
+  /* ---------- Theme variables ---------- */
+  :root{
+    --bg: #f7f5f2;
+    --fg: #1c1c1c;
+    --muted: #8a8a8a;
+    --line-hover: rgba(0,0,0,0.04);
+    --border: rgba(0,0,0,0.12);
+    --accent: #3b6ea5;
+    --toolbar-bg: #ffffff;
+  }
+  html.dark{
+    --bg: #14161a;
+    --fg: #e8e6e1;
+    --muted: #8f8f8f;
+    --line-hover: rgba(255,255,255,0.06);
+    --border: rgba(255,255,255,0.12);
+    --accent: #7aa7d9;
+    --toolbar-bg: #1c1f24;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Noto Sans JP","Yu Gothic","Hiragino Sans",sans-serif;
+  }
+
+  /* All real UI lives inside #app. Clipboard Inserter Redux blindly
+     appends raw <p> tags as direct children of <body> (outside #app) —
+     our MutationObserver below watches for exactly that. */
+  #app{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    overflow:hidden;
+  }
+
+  /* ---------- Toolbar ---------- */
+  #toolbar{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 12px;
+    background: var(--toolbar-bg);
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+    /* The window is frameless (no title bar), so the toolbar doubles as the
+       drag handle; interactive controls must opt back out or clicks get
+       swallowed by the drag region. */
+    -webkit-app-region: drag;
+  }
+  #toolbar button, #toolbar label, #manual-add{ -webkit-app-region: no-drag; }
+  #toolbar button{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--fg);
+    padding:6px 10px;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:15px;
+    line-height:1;
+  }
+  #toolbar button:hover{ background:var(--line-hover); }
+  #toolbar .spacer{ flex:1; }
+  #toolbar label{ font-size:12px; color:var(--muted); display:flex; align-items:center; gap:4px; }
+  #manual-add{
+    font-size:12px;
+    padding:5px 8px;
+    border-radius:6px;
+    border:1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    width:160px;
+  }
+
+  /* ---------- Line log ---------- */
+  #lines{
+    flex:1;
+    overflow-y:auto;
+    padding: 16px 24px 24px;
+  }
+  .line{
+    max-width: 900px;
+    margin: 0 auto 14px;
+    padding:6px 10px;
+    border-radius:6px;
+    line-height:1.8;
+    font-size: var(--font-size, 1.4rem);
+    position:relative;
+    user-select:text;
+  }
+  .line:hover{ background: var(--line-hover); }
+  .line .ts{
+    display:block;
+    font-size:11px;
+    color: var(--muted);
+    margin-bottom:2px;
+    user-select:none;
+  }
+  #app.hide-ts .line .ts{ display:none; }
+  .line .del{
+    position:absolute;
+    right:4px;
+    top:4px;
+    font-size:11px;
+    color: var(--muted);
+    cursor:pointer;
+    opacity:0;
+    user-select:none;
+  }
+  .line:hover .del{ opacity:1; }
+
+  /* ---------- Footer / jump button ---------- */
+  #footer{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:6px 14px;
+    background: var(--toolbar-bg);
+    border-top:1px solid var(--border);
+    font-size:11px;
+    color: var(--muted);
+  }
+  #jump-btn{
+    display:none;
+    background: var(--accent);
+    color:#fff;
+    border:none;
+    padding:6px 12px;
+    border-radius:14px;
+    font-size:12px;
+    cursor:pointer;
+  }
+  #jump-btn.show{ display:inline-block; }
+
+  /* ---------- Edge drag strips (frameless window) ---------- */
+  /* Invisible hit-areas so the window can be moved by grabbing its left or
+     right edge — works even in focus mode when the toolbar is hidden. Kept
+     narrow so they only cover #lines' padding, never selectable text, and
+     z-indexed under #exit-focus so that button stays clickable. */
+  .drag-edge{
+    position:fixed;
+    top:0;
+    bottom:0;
+    width:12px;
+    z-index:9;
+    -webkit-app-region: drag;
+  }
+  #drag-left{ left:0; }
+  #drag-right{ right:0; }
+
+  /* ---------- Focus mode (hide everything but the text) ---------- */
+  #app.focus-mode #toolbar,
+  #app.focus-mode #footer{ display:none; }
+  #exit-focus{
+    display:none;
+    position:fixed;
+    top:8px;
+    right:8px;
+    z-index:10;
+    background:var(--toolbar-bg);
+    border:1px solid var(--border);
+    color:var(--fg);
+    padding:4px 9px;
+    border-radius:6px;
+    font-size:11px;
+    cursor:pointer;
+    opacity:0.15;
+    transition:opacity 0.15s;
+  }
+  #exit-focus:hover{ opacity:1; }
+  #app.focus-mode #exit-focus{ display:inline-block; }
+</style>
+</head>
+<body>
+
+<div class="drag-edge" id="drag-left"></div>
+<div class="drag-edge" id="drag-right"></div>
+
+<!-- Starts in focus mode; Esc or the ✕ top-right brings the UI back -->
+<div id="app" class="focus-mode">
+  <div id="toolbar">
+    <button id="btn-quit" title="Quit the app">✕</button>
+    <button id="btn-clear" title="Clear all lines">🗑️</button>
+    <button id="btn-ts" title="Toggle timestamps">🕒</button>
+    <button id="btn-font-minus" title="Smaller text">A-</button>
+    <button id="btn-font-plus" title="Larger text">A+</button>
+    <button id="btn-theme" title="Toggle light/dark theme">🌓</button>
+    <button id="btn-focus" title="Focus mode (hide UI)">📖</button>
+    <button id="btn-fullscreen" title="Toggle browser fullscreen">⛶</button>
+    <button id="btn-float" title="Open floating window (always-on-top)">🪟</button>
+    <div class="spacer"></div>
+    <input type="text" id="manual-add" placeholder="manual line + Enter">
+    <label><input type="checkbox" id="chk-autoscroll" checked> Auto-scroll</label>
+  </div>
+
+  <button id="exit-focus" title="Exit focus mode (Esc)">✕</button>
+
+  <div id="lines"></div>
+
+  <div id="footer">
+    <span id="stats">0 lines · 0 chars</span>
+    <button id="jump-btn">↓ new lines</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const app       = document.getElementById('app');
+  const linesEl   = document.getElementById('lines');
+  const statsEl   = document.getElementById('stats');
+  const jumpBtn   = document.getElementById('jump-btn');
+  const autoScrollChk = document.getElementById('chk-autoscroll');
+  const manualAdd = document.getElementById('manual-add');
+
+  const STORAGE_KEY = 'texthooker-lines';
+  const PREFS_KEY    = 'texthooker-prefs';
+
+  let lines = [];
+  let prefs = { theme:'dark', fontSize:2, hideTs:true };
+
+  // ---------- persistence ----------
+  function load(){
+    try{ lines = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }catch(e){ lines = []; }
+    try{ prefs = Object.assign(prefs, JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')); }catch(e){}
+  }
+  function saveLines(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(lines)); }
+  function savePrefs(){ localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }
+
+  // ---------- rendering ----------
+  function fmtTime(d){
+    const p = n => String(n).padStart(2,'0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function renderAll(){
+    linesEl.innerHTML = '';
+    for(const l of lines) linesEl.appendChild(buildLineEl(l));
+    updateStats();
+    scrollToBottom();
+  }
+
+  function buildLineEl(l){
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.dataset.id = l.id;
+    div.style.fontSize = prefs.fontSize + 'rem';
+
+    const ts = document.createElement('span');
+    ts.className = 'ts';
+    ts.textContent = fmtTime(new Date(l.time));
+
+    const text = document.createElement('span');
+    text.className = 'text';
+    text.textContent = l.text;
+
+    const del = document.createElement('span');
+    del.className = 'del';
+    del.textContent = '✕';
+    del.title = 'Remove line';
+    del.addEventListener('click', () => removeLine(l.id));
+
+    div.appendChild(ts);
+    div.appendChild(text);
+    div.appendChild(del);
+    return div;
+  }
+
+  function updateStats(){
+    const chars = lines.reduce((sum,l) => sum + l.text.length, 0);
+    statsEl.textContent = `${lines.length} lines · ${chars} chars`;
+  }
+
+  function isNearBottom(){
+    return linesEl.scrollHeight - linesEl.scrollTop - linesEl.clientHeight < 60;
+  }
+
+  function scrollToBottom(){
+    linesEl.scrollTop = linesEl.scrollHeight;
+    jumpBtn.classList.remove('show');
+  }
+
+  // ---------- mutation ops (our own data model) ----------
+  function appendLine(text){
+    text = text.trim();
+    if(!text) return;
+    // dedupe against the immediately preceding line (clipboard double-fire, etc.)
+    if(lines.length && lines[lines.length-1].text === text) return;
+
+    const wasNearBottom = isNearBottom();
+    const entry = { id: Date.now() + '-' + Math.random().toString(36).slice(2,7), text, time: Date.now() };
+    lines.push(entry);
+    saveLines();
+    linesEl.appendChild(buildLineEl(entry));
+    updateStats();
+
+    if(autoScrollChk.checked && wasNearBottom){
+      scrollToBottom();
+    } else {
+      jumpBtn.classList.add('show');
+    }
+  }
+
+  function removeLine(id){
+    lines = lines.filter(l => l.id !== id);
+    saveLines();
+    renderAll();
+  }
+
+  function clearAll(){
+    lines = [];
+    saveLines();
+    renderAll();
+  }
+
+  // ---------- Clipboard Inserter Redux capture ----------
+  // This extension polls the OS clipboard and, on change, creates a
+  // <p> element with the clipboard text and appends it as the LAST
+  // child of <body> (no selector/config to point it anywhere else).
+  // We watch body's direct children for exactly that pattern, grab the
+  // text, and remove the raw node so it never visually clutters the page.
+  const bodyObserver = new MutationObserver((mutations) => {
+    for(const m of mutations){
+      // only look at nodes appended directly to <body> itself, never nested
+      // elements inside something else (e.g. a Yomitan popup frame, which
+      // gets attached inside its own container, not as a bare <p> on body).
+      if(m.target !== document.body) continue;
+      for(const node of m.addedNodes){
+        if(node.nodeType !== 1) continue;      // element nodes only
+        if(node === app) continue;             // ignore our own container
+        // Clipboard Inserter Redux specifically injects a bare <p> tag with
+        // just text content and appends it to <body>. Only grab that exact
+        // shape so we never touch unrelated elements other extensions
+        // (Yomitan's popup, etc.) add to the page.
+        if(node.tagName !== 'P') continue;
+        if(node.children.length > 0) continue;
+        const text = node.textContent || '';
+        node.remove();
+        appendLine(text);
+      }
+    }
+  });
+  bodyObserver.observe(document.body, { childList: true });
+
+  // ---------- manual add (for testing / your own notes) ----------
+  manualAdd.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){
+      appendLine(manualAdd.value);
+      manualAdd.value = '';
+    }
+  });
+
+  // ---------- prefs / theme / font ----------
+  function applyPrefs(){
+    document.documentElement.classList.toggle('dark', prefs.theme === 'dark');
+    app.classList.toggle('hide-ts', !!prefs.hideTs);
+    document.querySelectorAll('.line').forEach(el => el.style.fontSize = prefs.fontSize + 'rem');
+    syncPipTheme();
+  }
+
+  // Electron lets a renderer close its own BrowserWindow with plain
+  // window.close(); main.js quits the whole app when this window closes.
+  document.getElementById('btn-quit').addEventListener('click', () => window.close());
+  document.getElementById('btn-clear').addEventListener('click', clearAll);
+  document.getElementById('btn-ts').addEventListener('click', () => {
+    prefs.hideTs = !prefs.hideTs;
+    savePrefs();
+    applyPrefs();
+  });
+  document.getElementById('btn-font-minus').addEventListener('click', () => {
+    prefs.fontSize = Math.max(0.8, +(prefs.fontSize - 0.1).toFixed(2));
+    savePrefs(); applyPrefs();
+  });
+  document.getElementById('btn-font-plus').addEventListener('click', () => {
+    prefs.fontSize = Math.min(3, +(prefs.fontSize + 0.1).toFixed(2));
+    savePrefs(); applyPrefs();
+  });
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    prefs.theme = prefs.theme === 'dark' ? 'light' : 'dark';
+    savePrefs(); applyPrefs();
+  });
+  document.getElementById('btn-focus').addEventListener('click', () => {
+    app.classList.add('focus-mode');
+  });
+  document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    if(document.fullscreenElement){
+      document.exitFullscreen();
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  });
+
+  // ---------- floating (always-on-top) window ----------
+  // Uses the Document Picture-in-Picture API (Chrome/Edge 116+) to pop
+  // #app into a real always-on-top OS window, then moves it back into
+  // this document when that window is closed.
+  let pipWindow = null;
+
+  function syncPipTheme(){
+    if(pipWindow) pipWindow.document.documentElement.classList.toggle('dark', prefs.theme === 'dark');
+  }
+
+  document.getElementById('btn-float').addEventListener('click', async () => {
+    if(!('documentPictureInPicture' in window)){
+      alert("Your browser doesn't support floating windows (Document Picture-in-Picture). Try a recent Chrome or Edge.");
+      return;
+    }
+    if(pipWindow){ pipWindow.close(); return; }
+
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 560, height: 680 });
+
+    for(const styleSheet of document.styleSheets){
+      try{
+        const css = [...styleSheet.cssRules].map(r => r.cssText).join('\n');
+        const style = document.createElement('style');
+        style.textContent = css;
+        pipWindow.document.head.appendChild(style);
+      }catch(e){
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = styleSheet.href;
+        pipWindow.document.head.appendChild(link);
+      }
+    }
+    pipWindow.document.body.style.margin = '0';
+    pipWindow.document.body.appendChild(app);
+    syncPipTheme();
+
+    pipWindow.addEventListener('pagehide', () => {
+      document.body.appendChild(app);
+      pipWindow = null;
+    }, { once: true });
+  });
+  document.getElementById('exit-focus').addEventListener('click', () => {
+    app.classList.remove('focus-mode');
+  });
+  document.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape') app.classList.remove('focus-mode');
+  });
+  jumpBtn.addEventListener('click', scrollToBottom);
+  linesEl.addEventListener('scroll', () => {
+    if(isNearBottom()) jumpBtn.classList.remove('show');
+  });
+
+  // ---------- init ----------
+  load();
+  applyPrefs();
+  renderAll();
+})();
+</script>
+</body>
+</html>
